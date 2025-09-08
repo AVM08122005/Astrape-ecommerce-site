@@ -1,7 +1,7 @@
 # Astrape — E-commerce Site
 
 > A modern, responsive e-commerce frontend built with Next.js and Tailwind CSS.  
-> **Live demo:** [astrape-ecommerce-site.vercel.app](https://astrape-ecommerce-site.vercel.app/)
+> **Live demo:** [astrape-ecommerce-site.vercel.app]((https://astrapeonlineshop.vercel.app/))
 
 ---
 
@@ -37,7 +37,7 @@ The repository includes pages and components for:
 
 ## 🚀 Demo
 
-🔗 [astrape-ecommerce-site.vercel.app](https://astrape-ecommerce-site.vercel.app/)
+🔗 [astrape-ecommerce-site.vercel.app]((https://astrapeonlineshop.vercel.app/))
 
 ---
 
