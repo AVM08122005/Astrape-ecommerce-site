@@ -7,19 +7,20 @@ export default function Navbar() {
   const router = useRouter();
   const path = usePathname();
   const [user, setUser] = useState(null);
+  const [checking, setChecking] = useState(true);
 
   useEffect(() => {
     // quick attempt to detect logged in user
     // profile endpoint returns 401 if not logged in
     (async () => {
       try {
-        const res = await fetch("/api/profile");
+        const res = await fetch("/api/profile", { credentials: "include" });
         if (!res.ok) { setUser(null); return; }
         const data = await res.json();
         setUser(data.user);
       } catch (e) {
         setUser(null);
-      }
+      } finally { setChecking(false); }
     })();
   }, [path]);
 
@@ -40,7 +41,7 @@ export default function Navbar() {
           </div>
 
           <div className="flex items-center gap-4">
-            {user ? (
+            {checking ? null : user ? (
               <>
                 <span className="text-sm text-gray-700">Hi, {user.name}</span>
                 <button onClick={handleLogout}

@@ -6,6 +6,7 @@ const ItemSchema = new mongoose.Schema({
   price: { type: Number, required: true },
   category: { type: String, index: true },
   imageUrl: { type: String },
+  vendorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Vendor', index: true },
   createdAt: { type: Date, default: Date.now }
 });
 

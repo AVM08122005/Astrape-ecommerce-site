@@ -8,6 +8,7 @@ export default function ItemsPage() {
     category: "",
     price_min: "",
     price_max: "",
+    city: "",
   });
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
@@ -57,10 +58,11 @@ export default function ItemsPage() {
       const ps = new URLSearchParams();
       if (filters.q) ps.set("q", filters.q);
       if (filters.category) ps.set("category", filters.category);
-      if (filters.price_min) ps.set("price_min", filters.price_min);
-      if (filters.price_max) ps.set("price_max", filters.price_max);
+      if (filters.city) ps.set("city", filters.city);
+      if (filters.price_min) ps.set("minPrice", filters.price_min);
+      if (filters.price_max) ps.set("maxPrice", filters.price_max);
 
-      const res = await fetch("/api/items?" + ps.toString(), {
+      const res = await fetch("/api/search?" + ps.toString(), {
         credentials: "include",
       });
       if (!res.ok) throw new Error("Failed");
@@ -142,13 +144,21 @@ export default function ItemsPage() {
           </div>
 
           {/* Filters grid - responsive layout */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             <input
               className="border rounded-lg px-3 py-1 text-base focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
               placeholder="Category"
               value={filters.category}
               onChange={(e) =>
                 setFilters({ ...filters, category: e.target.value })
+              }
+            />
+            <input
+              className="border rounded-lg px-3 py-1 text-base focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              placeholder="City"
+              value={filters.city}
+              onChange={(e) =>
+                setFilters({ ...filters, city: e.target.value })
               }
             />
             <input

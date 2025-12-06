@@ -10,7 +10,7 @@ export async function GET(req, { params }) {
     const resolvedParams = await params;
     const { id } = resolvedParams;
     
-    const item = await Item.findById(id).lean();
+    const item = await Item.findById(id).populate('vendorId').lean();
     if (!item) {
       return new Response(JSON.stringify({ message: "Item not found" }), { status: 404 });
     }
@@ -44,6 +44,7 @@ export async function PUT(req, { params }) {
     if (body.price) item.price = parseFloat(body.price);
     if (body.category !== undefined) item.category = body.category;
     if (body.imageUrl !== undefined) item.imageUrl = body.imageUrl;
+    if (body.vendorId !== undefined) item.vendorId = body.vendorId;
     
     await item.save();
     

@@ -4,75 +4,106 @@ import Item from "@/models/Item";
 import jwt from "jsonwebtoken";
 import { cookies } from "next/headers";
 
-/**
- * Helper: get current user (returns user doc)
- */
-async function getUserFromCookie() {
+async function getAuthUser() {
   await dbConnect();
   const cookieStore = await cookies();
   const token = cookieStore.get("token")?.value;
-  if (!token) return null;
-  if (!process.env.JWT_SECRET) {
-    console.error('JWT_SECRET is not defined');
-    throw new Error('Server configuration error');
-  }
   
-  const decoded = jwt.verify(token, process.env.JWT_SECRET);
-  const user = await User.findById(decoded.id).populate('cart.item').exec();
-  return user;
+  if (!token) return null;
+  
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id);
+    return user;
+  } catch (error) {
+    return null;
+  }
 }
 
-/** GET /api/cart - returns current user's cart */
+// GET /api/cart - Fetch user's cart
 export async function GET() {
   try {
-    const user = await getUserFromCookie();
-    if (!user) return new Response(JSON.stringify({ message: "Unauthorized" }), { status: 401 });
+    const user = await getAuthUser();
+    if (!user) {
+      return new Response(JSON.stringify({ message: "Please login" }), { status: 401 });
+    }
 
-    // send cart with populated item details
-    const cart = (user.cart || []).map(ci => ({
-      item: ci.item ? {
-        id: ci.item._id,
-        title: ci.item.title,
-        price: ci.item.price,
-        image: ci.item.image,
-        stock: ci.item.stock,
-        category: ci.item.category
+    console.log('📦 GET /api/cart - Raw cart before populate:', JSON.stringify(user.cart, null, 2));
+
+    // Populate cart items
+    await user.populate('cart.item');
+    
+    console.log('📦 GET /api/cart - Cart after populate:', user.cart.map(ci => ({
+      itemId: ci.item?._id?.toString(),
+      title: ci.item?.title,
+      quantity: ci.quantity
+    })));
+    
+    const cart = user.cart.map(cartItem => ({
+      item: cartItem.item ? {
+        id: cartItem.item._id.toString(),
+        title: cartItem.item.title,
+        price: cartItem.item.price,
+        imageUrl: cartItem.item.imageUrl,
+        category: cartItem.item.category
       } : null,
-      quantity: ci.quantity,
-      priceSnapshot: ci.priceSnapshot,
-      addedAt: ci.addedAt
-    }));
+      quantity: cartItem.quantity,
+      priceSnapshot: cartItem.priceSnapshot
+    })).filter(ci => ci.item !== null);
 
-    return new Response(JSON.stringify({ cart }), { status: 200 });
-  } catch (err) {
-    console.error("GET /api/cart error:", err);
+    console.log('📦 GET /api/cart - Returning cart:', cart);
+
+    return new Response(JSON.stringify({ cart }), { 
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error) {
+    console.error("❌ GET /api/cart error:", error);
     return new Response(JSON.stringify({ message: "Server error" }), { status: 500 });
   }
 }
 
-/** POST /api/cart - add item to cart
- * body: { itemId, quantity }
- */
+// POST /api/cart - Add item to cart
 export async function POST(req) {
   try {
-    const user = await getUserFromCookie();
-    if (!user) return new Response(JSON.stringify({ message: "Unauthorized" }), { status: 401 });
+    const user = await getAuthUser();
+    if (!user) {
+      return new Response(JSON.stringify({ message: "Please login" }), { status: 401 });
+    }
 
-    const body = await req.json();
-    const { itemId, quantity = 1 } = body;
-    if (!itemId) return new Response(JSON.stringify({ message: "itemId required" }), { status: 400 });
+    const { itemId, quantity = 1 } = await req.json();
+    
+    console.log('➕ POST /api/cart - Adding itemId:', itemId, 'quantity:', quantity);
+    console.log('➕ POST /api/cart - Current cart:', user.cart.map(ci => ({
+      itemId: ci.item.toString(),
+      qty: ci.quantity
+    })));
+    
+    if (!itemId) {
+      return new Response(JSON.stringify({ message: "Item ID required" }), { status: 400 });
+    }
 
-    const item = await Item.findById(itemId).lean();
-    if (!item) return new Response(JSON.stringify({ message: "Item not found" }), { status: 404 });
+    const item = await Item.findById(itemId);
+    if (!item) {
+      return new Response(JSON.stringify({ message: "Item not found" }), { status: 404 });
+    }
 
-    const qty = Math.max(1, parseInt(quantity, 10) || 1);
+    const qty = Math.max(1, parseInt(quantity));
 
-    // If item already in cart, increase quantity
-    const existingIndex = user.cart.findIndex(ci => ci.item.toString() === itemId.toString());
-    if (existingIndex > -1) {
-      user.cart[existingIndex].quantity = Math.min((user.cart[existingIndex].quantity || 0) + qty, 1000);
-      user.cart[existingIndex].priceSnapshot = item.price; // optionally update snapshot
+    // Check if item already exists in cart
+    const existingItemIndex = user.cart.findIndex(
+      ci => ci.item.toString() === itemId.toString()
+    );
+
+    console.log('➕ POST /api/cart - Existing item index:', existingItemIndex);
+
+    if (existingItemIndex >= 0) {
+      // Item exists - increment quantity
+      console.log('➕ POST /api/cart - Item exists, incrementing from', user.cart[existingItemIndex].quantity, 'to', user.cart[existingItemIndex].quantity + qty);
+      user.cart[existingItemIndex].quantity += qty;
     } else {
+      // Item doesn't exist - add new entry
+      console.log('➕ POST /api/cart - Item does not exist, adding new entry');
       user.cart.push({
         item: item._id,
         quantity: qty,
@@ -81,54 +112,78 @@ export async function POST(req) {
     }
 
     await user.save();
-    // populate item for response
-    await user.populate('cart.item');
+    
+    console.log('✅ POST /api/cart - Cart after save:', user.cart.map(ci => ({
+      itemId: ci.item.toString(),
+      qty: ci.quantity
+    })));
 
-    return new Response(JSON.stringify({ message: "Added to cart" }), { status: 200 });
-  } catch (err) {
-    console.error("POST /api/cart error:", err);
-    // jwt.verify can throw a JsonWebTokenError; handle generically
+    return new Response(JSON.stringify({ message: "Added to cart" }), { 
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error) {
+    console.error("❌ POST /api/cart error:", error);
     return new Response(JSON.stringify({ message: "Server error" }), { status: 500 });
   }
 }
 
-/** PUT /api/cart - update quantity for item
- * body: { itemId, quantity }
- */
+// PUT /api/cart - Update cart item quantity
 export async function PUT(req) {
   try {
-    const user = await getUserFromCookie();
-    if (!user) return new Response(JSON.stringify({ message: "Unauthorized" }), { status: 401 });
+    const user = await getAuthUser();
+    if (!user) {
+      return new Response(JSON.stringify({ message: "Please login" }), { status: 401 });
+    }
 
-    const body = await req.json();
-    const { itemId, quantity } = body;
-    if (!itemId || typeof quantity === "undefined") return new Response(JSON.stringify({ message: "itemId and quantity required" }), { status: 400 });
+    const { itemId, quantity } = await req.json();
+    
+    console.log('🔄 PUT /api/cart - Updating itemId:', itemId, 'to quantity:', quantity);
+    console.log('🔄 PUT /api/cart - Current cart:', user.cart.map(ci => ({
+      itemId: ci.item.toString(),
+      qty: ci.quantity
+    })));
+    
+    if (!itemId || quantity === undefined) {
+      return new Response(JSON.stringify({ message: "Item ID and quantity required" }), { status: 400 });
+    }
 
-    console.log('PUT /api/cart - Looking for itemId:', itemId);
-    console.log('PUT /api/cart - Cart items:', user.cart.map(ci => ({ itemId: ci.item?.toString?.() || ci.item, quantity: ci.quantity })));
+    const qty = parseInt(quantity);
     
-    const idx = user.cart.findIndex(ci => {
-      const cartItemId = ci.item?._id?.toString() || ci.item?.toString() || ci.item;
-      return cartItemId === itemId.toString();
-    });
-    
-    if (idx === -1) {
-      console.log('PUT /api/cart - Item not found in cart');
+    const itemIndex = user.cart.findIndex(
+      ci => ci.item.toString() === itemId.toString()
+    );
+
+    console.log('🔄 PUT /api/cart - Found at index:', itemIndex);
+
+    if (itemIndex === -1) {
+      console.log('❌ PUT /api/cart - Item not found in cart');
       return new Response(JSON.stringify({ message: "Item not in cart" }), { status: 404 });
     }
 
-    const qty = parseInt(quantity, 10);
     if (qty <= 0) {
-      // remove item if quantity <= 0
-      user.cart.splice(idx, 1);
+      // Remove item from cart
+      console.log('🗑️ PUT /api/cart - Removing item from cart');
+      user.cart.splice(itemIndex, 1);
     } else {
-      user.cart[idx].quantity = qty;
+      // Update quantity
+      console.log('🔄 PUT /api/cart - Updating quantity from', user.cart[itemIndex].quantity, 'to', qty);
+      user.cart[itemIndex].quantity = Math.min(qty, 999);
     }
 
     await user.save();
-    return new Response(JSON.stringify({ message: "Cart updated" }), { status: 200 });
-  } catch (err) {
-    console.error("PUT /api/cart error:", err);
+    
+    console.log('✅ PUT /api/cart - Cart after save:', user.cart.map(ci => ({
+      itemId: ci.item.toString(),
+      qty: ci.quantity
+    })));
+
+    return new Response(JSON.stringify({ message: "Cart updated" }), { 
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error) {
+    console.error("❌ PUT /api/cart error:", error);
     return new Response(JSON.stringify({ message: "Server error" }), { status: 500 });
   }
 }

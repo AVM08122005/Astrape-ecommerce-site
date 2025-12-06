@@ -36,7 +36,7 @@ export async function GET(req) {
       if (priceMax) query.price.$lte = parseFloat(priceMax);
     }
     
-    const items = await Item.find(query).lean();
+    const items = await Item.find(query).populate('vendorId').lean();
     
     return new Response(JSON.stringify({ items }), { status: 200 });
   } catch (err) {
@@ -47,14 +47,14 @@ export async function GET(req) {
 
 /**
  * POST /api/items - Create a new item
- * Body: { title, description, price, category, imageUrl, stock }
+ * Body: { title, description, price, category, imageUrl, stock, vendorId }
  */
 export async function POST(req) {
   try {
     await dbConnect();
     const body = await req.json();
     
-    const { title, description, price, category, imageUrl, stock = 100 } = body;
+    const { title, description, price, category, imageUrl, stock = 100, vendorId } = body;
     
     if (!title || !price) {
       return new Response(JSON.stringify({ message: "Title and price are required" }), { status: 400 });
@@ -66,7 +66,8 @@ export async function POST(req) {
       price: parseFloat(price),
       category: category || "general",
       imageUrl: imageUrl || "",
-      stock: parseInt(stock) || 100
+      stock: parseInt(stock) || 100,
+      vendorId: vendorId || undefined
     });
     
     return new Response(JSON.stringify({ message: "Item created", item }), { status: 201 });

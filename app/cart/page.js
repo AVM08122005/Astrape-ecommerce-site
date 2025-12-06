@@ -20,11 +20,7 @@ export default function CartPage() {
 
   function getImageForItem(item) {
     if (!item) return "/next.svg";
-    if (
-      item.imageUrl &&
-      typeof item.imageUrl === "string" &&
-      !item.imageUrl.includes("/images/")
-    ) {
+    if (item.imageUrl && typeof item.imageUrl === "string" && !item.imageUrl.includes("/images/")) {
       return item.imageUrl;
     }
     const titleToImageMap = {
@@ -81,37 +77,10 @@ export default function CartPage() {
     }, 0);
   }
 
-  // helper for consistent id normalization across render / update / remove
-  function cartLineIdOf(ci) {
-    return String(ci.id ?? ci._id ?? ci.item?.id ?? ci.item?._id ?? "");
-  }
-
-  // Optimistic update for qty; rollback on failure
-  async function updateQty(cartLineId, qty) {
-    if (!cartLineId) return;
-    qty = Math.max(1, Number(qty) || 1);
+  async function updateQty(itemId, qty) {
+    if (!itemId || updatingItem) return;
     setMsg("");
-    setUpdatingItem(cartLineId);
-
-    const prevCart = cart; // snapshot for rollback
-
-    // Find the item ID from the cart line
-    const cartItem = prevCart.find(ci => cartLineIdOf(ci) === String(cartLineId));
-    if (!cartItem || !cartItem.item) {
-      setMsg("Cannot find item to update");
-      return;
-    }
-    
-    const itemId = cartItem.item.id || cartItem.item._id;
-
-    // optimistic update locally
-    setCart(prev =>
-      prev.map(ci => {
-        const idStr = cartLineIdOf(ci);
-        if (idStr === String(cartLineId)) return { ...ci, quantity: qty };
-        return ci;
-      })
-    );
+    setUpdatingItem(itemId);
 
     try {
       const res = await fetch("/api/cart", {
@@ -122,57 +91,43 @@ export default function CartPage() {
       });
 
       if (!res.ok) {
-        const b = await res.json().catch(() => ({}));
-        setMsg(b.message || "Failed to update quantity");
-        setCart(prevCart); // rollback
+        const error = await res.json().catch(() => ({}));
+        setMsg(error.message || "Failed to update quantity");
         return;
       }
 
-      // success: optionally re-fetch to sync canonical server state
-      // await fetchCart();
+      // Refresh cart from server
+      await fetchCart();
     } catch (e) {
       console.error(e);
       setMsg("Server error");
-      setCart(prevCart); // rollback
     } finally {
       setUpdatingItem(null);
     }
   }
 
-  async function removeItem(cartLineId) {
-    if (!cartLineId) return;
+  async function removeItem(itemId) {
+    if (!itemId || removingItem) return;
     setMsg("");
-    setRemovingItem(cartLineId);
+    setRemovingItem(itemId);
 
     try {
-      // optimistic remove locally
-      const prevCart = cart;
-      setCart(prev => prev.filter(ci => cartLineIdOf(ci) !== String(cartLineId)));
-
-      // Find the item ID from the cart line
-      const cartItem = prevCart.find(ci => cartLineIdOf(ci) === String(cartLineId));
-      if (!cartItem || !cartItem.item) {
-        setMsg("Cannot find item to remove");
-        setCart(prevCart); // rollback
-        return;
-      }
-      
-      const itemId = cartItem.item.id || cartItem.item._id;
-      const res = await fetch(`/api/cart/${encodeURIComponent(itemId)}`, {
+      const res = await fetch(`/api/cart/${itemId}`, {
         method: "DELETE",
         credentials: "include",
       });
 
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        setMsg(body.message || "Failed to remove item on server — refresh to retry");
-        setCart(prevCart); // rollback
+        const error = await res.json().catch(() => ({}));
+        setMsg(error.message || "Failed to remove item");
         return;
       }
+
+      // Refresh cart from server
+      await fetchCart();
     } catch (e) {
       console.error("removeItem error:", e);
       setMsg("Server error while removing item");
-      await fetchCart(); // re-sync
     } finally {
       setRemovingItem(null);
     }
@@ -184,7 +139,7 @@ export default function CartPage() {
     <div className="max-w-4xl mx-auto p-4 sm:p-6">
       <h1 className="text-xl sm:text-2xl font-semibold mb-4 sm:mb-6">Your Cart</h1>
       {msg && (
-        <div className="mb-4 text-sm text-red-600" role="alert">
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-600" role="alert">
           {msg}
         </div>
       )}
@@ -193,7 +148,7 @@ export default function CartPage() {
         <div className="bg-white p-6 rounded shadow text-center">
           <p>Your cart is empty</p>
           <button
-            className="mt-4 px-4 py-2 bg-primary text-white rounded"
+            className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
             onClick={() => router.push("/items")}
           >
             Shop now
@@ -207,120 +162,103 @@ export default function CartPage() {
                 <h2 className="text-lg font-semibold text-gray-900">Cart Items ({cart.length})</h2>
               </div>
               <div className="divide-y divide-gray-200">
-            {cart.map((ci) => {
-              const cartLineId = cartLineIdOf(ci);
-              const item = ci.item ?? {};
-              const price = Number(ci.priceSnapshot ?? item.price ?? 0);
-              const qty = Number(ci.quantity ?? 0);
+                {cart.map((ci) => {
+                  const item = ci.item;
+                  const itemId = item?.id;
+                  const price = Number(ci.priceSnapshot ?? item?.price ?? 0);
+                  const qty = Number(ci.quantity ?? 0);
 
-              return (
-                <div
-                  key={cartLineId || Math.random()}
-                  className="p-6"
-                >
-                  <div className="flex items-start gap-4">
-                    {/* Product Image */}
-                    <div className="flex-shrink-0">
-                      <img
-                        src={getImageForItem(item)}
-                        alt={item.title || "product"}
-                        className="w-20 h-20 object-cover rounded-lg border border-gray-200"
-                      />
-                    </div>
-                    
-                    {/* Product Details */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h3 className="text-lg font-medium text-gray-900 mb-1">
-                            {item.title || "(item removed)"}
-                          </h3>
-                          <p className="text-sm text-gray-500 mb-2">
-                            ${isNaN(price) ? "0.00" : price.toFixed(2)} each
-                          </p>
-                          <p className="text-xs text-gray-400 uppercase tracking-wide">
-                            {item.category || 'Product'}
-                          </p>
+                  return (
+                    <div key={itemId} className="p-6">
+                      <div className="flex items-start gap-4">
+                        {/* Product Image */}
+                        <div className="flex-shrink-0">
+                          <img
+                            src={getImageForItem(item)}
+                            alt={item?.title || "product"}
+                            className="w-20 h-20 object-cover rounded-lg border border-gray-200"
+                          />
                         </div>
                         
-                        {/* Remove button - top right */}
-                        <button
-                          onClick={() => removeItem(cartLineId)}
-                          className="text-gray-400 hover:text-red-500 transition-colors p-1"
-                          disabled={removingItem === cartLineId}
-                          title="Remove item"
-                        >
-                          {removingItem === cartLineId ? (
-                            <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                            </svg>
-                          ) : (
-                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          )}
-                        </button>
-                      </div>
-                      
-                      {/* Quantity and Price Row */}
-                      <div className="flex items-center justify-between mt-4">
-                        {/* Quantity controls */}
-                        <div className="flex items-center gap-3">
-                          <span className="text-sm text-gray-500">Qty:</span>
-                          <div className="flex items-center border border-gray-300 rounded-lg">
-                            <button
-                              onClick={() => updateQty(cartLineId, Math.max(1, qty - 1))}
-                              className="p-2 hover:bg-gray-50 disabled:opacity-50 transition-colors"
-                              disabled={updatingItem === cartLineId || removingItem === cartLineId}
-                              aria-label="Decrease quantity"
-                            >
-                              {updatingItem === cartLineId && updatingItem === cartLineId ? (
-                                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
-                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                </svg>
-                              ) : (
-                                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
-                                </svg>
-                              )}
-                            </button>
-                            <div className="px-4 py-2 font-medium text-gray-900 min-w-[3rem] text-center" aria-live="polite">
-                              {qty}
+                        {/* Product Details */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <h3 className="text-lg font-medium text-gray-900 mb-1">
+                                {item?.title || "(item removed)"}
+                              </h3>
+                              <p className="text-sm text-gray-500 mb-2">
+                                ${isNaN(price) ? "0.00" : price.toFixed(2)} each
+                              </p>
+                              <p className="text-xs text-gray-400 uppercase tracking-wide">
+                                {item?.category || 'Product'}
+                              </p>
                             </div>
+                            
+                            {/* Remove button */}
                             <button
-                              onClick={() => updateQty(cartLineId, qty + 1)}
-                              className="p-2 hover:bg-gray-50 disabled:opacity-50 transition-colors"
-                              disabled={updatingItem === cartLineId || removingItem === cartLineId}
-                              aria-label="Increase quantity"
+                              onClick={() => removeItem(itemId)}
+                              className="text-gray-400 hover:text-red-500 transition-colors p-1"
+                              disabled={removingItem === itemId}
+                              title="Remove item"
                             >
-                              {updatingItem === cartLineId ? (
+                              {removingItem === itemId ? (
                                 <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
                                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
                                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                 </svg>
                               ) : (
                                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                                 </svg>
                               )}
                             </button>
                           </div>
-                        </div>
-                        
-                        {/* Item total */}
-                        <div className="text-right">
-                          <p className="text-lg font-semibold text-gray-900">
-                            ${isNaN(price * qty) ? "0.00" : (price * qty).toFixed(2)}
-                          </p>
+                          
+                          {/* Quantity and Price Row */}
+                          <div className="flex items-center justify-between mt-4">
+                            {/* Quantity controls */}
+                            <div className="flex items-center gap-3">
+                              <span className="text-sm text-gray-500">Qty:</span>
+                              <div className="flex items-center border border-gray-300 rounded-lg">
+                                <button
+                                  onClick={() => updateQty(itemId, Math.max(1, qty - 1))}
+                                  className="p-2 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                                  disabled={updatingItem === itemId || removingItem === itemId}
+                                  aria-label="Decrease quantity"
+                                >
+                                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                                  </svg>
+                                </button>
+                                <div className="px-4 py-2 font-medium text-gray-900 min-w-[3rem] text-center" aria-live="polite">
+                                  {updatingItem === itemId ? "..." : qty}
+                                </div>
+                                <button
+                                  onClick={() => updateQty(itemId, qty + 1)}
+                                  className="p-2 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                                  disabled={updatingItem === itemId || removingItem === itemId}
+                                  aria-label="Increase quantity"
+                                >
+                                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                                  </svg>
+                                </button>
+                              </div>
+                            </div>
+                            
+                            {/* Item total */}
+                            <div className="text-right">
+                              <p className="text-lg font-semibold text-gray-900">
+                                ${isNaN(price * qty) ? "0.00" : (price * qty).toFixed(2)}
+                              </p>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                </div>
-              );
-            })}
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -383,7 +321,6 @@ export default function CartPage() {
                     }}
                     className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-4 px-6 rounded-lg font-semibold text-center transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed shadow-sm"
                     disabled={cart.length === 0}
-                    aria-disabled={cart.length === 0}
                   >
                     Proceed to Checkout
                   </button>
